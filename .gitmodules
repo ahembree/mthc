@@ -1,3 +1,6 @@
 [submodule "apps/Cortex-Analyzers"]
 	path = apps/Cortex-Analyzers
 	url = https://github.com/TheHive-Project/Cortex-Analyzers.git
+[submodule "apps/misp-docker"]
+	path = apps/misp-docker
+	url = https://github.com/MISP/misp-docker
