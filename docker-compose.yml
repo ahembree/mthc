@@ -1,54 +1,52 @@
 ---
-version: "2"
+version: "3"
 services:
-  nginx-proxy:
-    image: jwilder/nginx-proxy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./certs/:/etc/nginx/certs/
-      - /var/run/docker.sock:/tmp/docker.sock:ro
-    networks:
-      - mthc
-
   misp-db:
     image: mysql/mysql-server:5.7
-    restart: unless-stopped
+    restart: ${RESTART_POLICY}
     volumes:
-      - ./data/misp/db:/var/lib/mysql
+      - ${DATA_DIR}/data/misp/db:/var/lib/mysql
     environment:
-      - MYSQL_DATABASE=misp
-      - MYSQL_USER=misp
-      - MYSQL_PASSWORD=misp
-      - MYSQL_ROOT_PASSWORD=misp
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-misp}
+      - MYSQL_USER=${MYSQL_USER:-mysql}
+      - MYSQL_PASSWORD=${MYSQL_PASS:-mysql}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASS:-mysql}
     networks:
       - mthc
 
   misp-web:
     build: apps/misp-docker/web
+    depends_on:
+      - misp-db
     image: misp:latest
-    restart: unless-stopped
+    restart: ${RESTART_POLICY}
     volumes:
+      - ./apps/misp-docker/web/wait-for-it.sh:/usr/local/bin/wait-for-it.sh:ro
       - /dev/urandom/:/dev/random
-      - ./data/misp/web:/var/www/MISP
+      - ${DATA_DIR}/data/misp/web:/var/www/MISP
     environment:
       - MYSQL_HOST=misp-db
-      - MYSQL_DATABASE=misp
-      - MYSQL_USER=misp
-      - MYSQL_PASSWORD=misp
-      - MISP_ADMIN_EMAIL=admin@admin.test
-      - MISP_ADMIN_PASSPHRASE=admin
-      - MISP_BASEURL=http:\/\/misp\.test
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-misp}
+      - MYSQL_USER=${MYSQL_USER:-mysql}
+      - MYSQL_PASSWORD=${MYSQL_PASS:-mysql}
+      - MISP_ADMIN_EMAIL=${MISP_ADMIN_EMAIL:-admin@admin.test}
+      - MISP_ADMIN_PASSPHRASE=${MISP_ADMIN_PASSPHRASE:-admin}
+      - MISP_BASEURL=https://misp.${DOMAIN}
       - POSTFIX_RELAY_HOST=relay.fqdn
-      - TIMEZONE=Europe/Brussels
-      - VIRTUAL_HOST=misp.ir.local
+      - TIMEZONE=America/New_York
     networks:
-      mthc:
-        ipv4_address: 172.16.0.10
+      - mthc
+      - hms-docker_traefik_net
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.misp.rule=Host(`misp.${DOMAIN}`)
+      - traefik.http.routers.misp.middlewares=internal-ipwhitelist
+      - traefik.http.services.misp.loadbalancer.server.port=80
+    entrypoint: "wait-for-it.sh -t 0 -h misp-db -p 3306 -- /run.sh"
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.9.1
+    restart: ${RESTART_POLICY}
     environment:
       - http.host=0.0.0.0
       - transport.host=0.0.0.0
@@ -61,53 +59,53 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    ports:
-      - "9200:9200"
-      - "9300:9300"
     volumes:
-      - ./data/elasticsearch:/usr/share/elasticsearch/data
+      - elasticsearch:/usr/share/elasticsearch/data
     networks:
-      mthc:
-        ipv4_address: 172.16.0.9
+      - mthc
 
   cortex:
     image: thehiveproject/cortex:latest
+    restart: ${RESTART_POLICY}
     depends_on:
       - elasticsearch
-    expose:
-      - "9001"
     volumes:
       - ./conf/cortex.conf:/etc/cortex/application.conf
       - ./apps/Cortex-Analyzers:/opt/Cortex-Analyzers
-      - ./data/cortex/:/data
-    environment:
-      - VIRTUAL_HOST=cortex.ir.local
-      - VIRTUAL_PORT=9001
+      - ${DATA_DIR}/data/cortex/:/data
     networks:
-      mthc:
-        ipv4_address: 172.16.0.11
+      - mthc
+      - hms-docker_traefik_net
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.cortex.rule=Host(`cortex.${DOMAIN}`)
+      - traefik.http.routers.cortex.middlewares=internal-ipwhitelist
+      - traefik.http.services.cortex.loadbalancer.server.port=9001
 
   thehive:
     image: thehiveproject/thehive:latest
+    restart: ${RESTART_POLICY}
     depends_on:
       - elasticsearch
       - cortex
-    expose:
-      - "9000"
     volumes:
       - ./conf/thehive.conf:/etc/thehive/application.conf
-    environment:
-      - VIRTUAL_HOST=thehive.ir.local
-      - VIRTUAL_PORT=9000
     networks:
-      mthc:
-        ipv4_address: 172.16.0.12
-    command: --cortex-key=<key>
+      - mthc
+      - hms-docker_traefik_net
+    command: --cortex-key ${CORTEX_KEY}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.thehive.rule=Host(`thehive.${DOMAIN}`)
+      - traefik.http.routers.thehive.middlewares=internal-ipwhitelist
+      - traefik.http.services.thehive.loadbalancer.server.port=9000
 
 networks:
   mthc:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.16.0.0/24
-          gateway: 172.16.0.2
+  hms-docker_traefik_net:
+    external: true
+
+volumes:
+  elasticsearch:
+    driver: local
